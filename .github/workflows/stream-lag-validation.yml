@@ -1,0 +1,44 @@
+name: Fork stream-lag validation
+on:
+  push:
+    branches: [ci/stream-lag-validation]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CLIENT_LIBS_TEST_IMAGE_TAG: '8.10.2'
+      CLIENT_LIBS_TEST_STACK_IMAGE_TAG: '8.10.2'
+      REDIS_MOD_URL: redis://127.0.0.1:6379
+      COVERAGE_CORE: sysmon
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Verify Docker and install test dependencies
+        run: |
+          docker info
+          docker compose version
+          pip install -r dev_requirements.txt
+          pip uninstall -y redis
+          pip install -e '.[jwt,otel]'
+      - name: Start exact repository test topology
+        run: |
+          invoke devenv --endpoints all
+          sleep 15
+          docker compose ps
+          docker compose exec -T redis redis-cli -p 6379 PING
+          docker compose exec -T cluster redis-cli -p 16379 CLUSTER INFO
+          docker compose exec -T sentinel redis-cli -p 26379 SENTINEL masters
+          docker compose exec -T replica redis-cli -p 6380 INFO replication
+          curl --fail http://localhost:4000/stats
+      - name: Run repository lint and full response-mode test matrix
+        run: invoke run-test-matrix
+      - name: Stop test services
+        if: always()
+        run: docker compose --profile all down --volumes
